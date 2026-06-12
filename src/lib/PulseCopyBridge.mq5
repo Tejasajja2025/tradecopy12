@@ -3,13 +3,13 @@
 //|                             igrow Learning Society Self-Hosted    |
 //+------------------------------------------------------------------+
 #property copyright "igrow Learning Society"
-#property link      "https://your-domain.com"
+#property link      "https://www.igrowlearningsociety.in"
 #property version   "2.0"
 #property strict
 
 #include <Trade\Trade.mqh>
 
-input string ApiUrl = "https://your-domain.com/api/signals";
+input string ApiUrl = "https://www.igrowlearningsociety.in/api/signals";
 input string FollowerKey = "";
 input int    RequestTimeoutMs = 5000;
 input int    PollIntervalSec = 5;
@@ -134,7 +134,7 @@ bool ParseFirstPendingSignal(const string json, int searchFrom, int &nextSearchS
    int arrayStart = StringFind(json, "[", signalsIndex);
    if(arrayStart < 0) return false;
 
-   int objectStart = StringFind(json, "{", MathMax(arrayStart, searchFrom));
+   int objectStart = StringFind(json, "{", MaxInt(arrayStart, searchFrom));
    if(objectStart < 0) return false;
 
    int objectEnd = StringFind(json, "}", objectStart);
@@ -155,7 +155,7 @@ bool ParseFirstPendingSignal(const string json, int searchFrom, int &nextSearchS
    return StringLen(signalId) > 0 && StringLen(currencyPair) > 0 && StringLen(direction) > 0;
 }
 
-int MathMax(int a, int b)
+int MaxInt(int a, int b)
 {
    return a > b ? a : b;
 }
@@ -279,7 +279,18 @@ bool ExecuteSignal(const string currencyPair, const string direction, double ent
    }
 
    Print("Resolved market price for ", currencyPair, ": ", DoubleToString(price, _Digits), " (direction=", direction, ")");
-   SanitizeStops(currencyPair, orderType, price, stopLoss, takeProfit);
+      // Prevent duplicate orders: if a position already exists for this symbol in the same direction, skip
+      if(PositionSelect(currencyPair))
+      {
+         int existingType = (int)PositionGetInteger(POSITION_TYPE);
+         if((existingType == POSITION_TYPE_BUY && orderType == ORDER_TYPE_BUY) || (existingType == POSITION_TYPE_SELL && orderType == ORDER_TYPE_SELL))
+         {
+            Print("Skipping signal: existing position for ", currencyPair, " in same direction");
+            return false;
+         }
+      }
+
+      SanitizeStops(currencyPair, orderType, price, stopLoss, takeProfit);
 
    MqlTradeRequest request;
    MqlTradeResult result;

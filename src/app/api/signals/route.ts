@@ -2,6 +2,8 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { db, query as sqlQuery, isDatabaseMock } from '@/lib/database';
 
+const useMockDb = process.env.USE_MOCK_DB === 'true';
+
 const MOCK_SIGNALS = [
   {
     id: 'mock-1',
@@ -50,19 +52,30 @@ function isDbConnectionError(error: any) {
 
 export async function GET(request: NextRequest) {
   const followerKey = (request.nextUrl.searchParams.get('followerKey') || '').trim();
+  const statusParam = (request.nextUrl.searchParams.get('status') || '').toString().toUpperCase();
+  const includeAll = statusParam === 'ALL';
+  const statusFilter = includeAll ? null : (statusParam || 'PENDING');
 
   try {
     let sqlSignals: any[] = [];
     try {
       if (followerKey) {
         try {
+          const params: any[] = [followerKey];
+          let statusWhere = '';
+          if (statusFilter === 'PENDING') {
+            statusWhere = "AND (s.status = 'PENDING' OR s.status = 'PENDING_CLOSE')";
+          } else if (statusFilter) {
+            statusWhere = 'AND s.status = ?';
+            params.push(statusFilter);
+          }
           const [rows] = await sqlQuery(
             `SELECT s.id, s.currency_pair AS currencyPair, s.direction, s.action, s.entry_price AS entryPrice, s.stop_loss AS stopLoss, s.take_profit AS takeProfit, s.status, s.created_at
              FROM signals s
              JOIN followers f ON f.signal_id = s.id
-             WHERE f.follower_key = ? AND f.status = 'ACTIVE' AND s.status = 'PENDING' AND (f.last_seen IS NULL OR f.last_seen < s.created_at)
+             WHERE f.follower_key = ? AND f.status = 'ACTIVE' ${statusWhere} AND (f.last_seen IS NULL OR f.last_seen < s.created_at)
              ORDER BY s.created_at DESC`,
-            [followerKey]
+            params
           );
           sqlSignals = Array.isArray(rows) ? rows : [];
 
@@ -102,16 +115,19 @@ export async function GET(request: NextRequest) {
         }
       } else {
         try {
+          const params: any[] = [];
+          const statusWhere = statusFilter ? 'WHERE s.status = ?' : '';
+          if (statusFilter) params.push(statusFilter);
           const [rows] = await sqlQuery(
             `SELECT s.id, s.currency_pair AS currencyPair, s.direction, s.action, s.entry_price AS entryPrice, s.stop_loss AS stopLoss, s.take_profit AS takeProfit, s.status, s.created_at,
                     COALESCE(SUM(f.status = 'ACTIVE'), 0) AS followerCount
              FROM signals s
              LEFT JOIN followers f ON f.signal_id = s.id
-             WHERE s.status = ?
+             ${statusWhere}
              GROUP BY s.id
              ORDER BY s.created_at DESC
-             LIMIT 10`,
-            ['PENDING']
+             LIMIT 50`,
+            params
           );
           sqlSignals = Array.isArray(rows) ? rows : [];
         } catch (sqlErr) {
@@ -132,35 +148,36 @@ export async function GET(request: NextRequest) {
       }
     } catch (sqlErr: any) {
       console.error('SQL select failed', sqlErr);
-      // Fall back to mock signals on any database error (connection errors, schema errors, etc.)
       const isFieldError = sqlErr?.errno === 1054;
-      if (isDbConnectionError(sqlErr) || isFieldError || isDatabaseMock()) {
-        console.warn('Database error or schema mismatch, using mock signals', sqlErr?.message);
-        const signals = MOCK_SIGNALS.map((row) => ({
-          id: row.id,
-          source: row.source,
-          currencyPair: row.currencyPair,
-          direction: row.direction,
-          entryPrice: row.entryPrice,
-          stopLoss: row.stopLoss,
-          takeProfit: row.takeProfit,
-          action: row.action,
-          status: row.status,
-          createdAt: row.created_at,
-          followerCount: row.followerCount,
-        }));
-        return NextResponse.json({
-          success: true,
-          count: signals.length,
-          followerKey: followerKey || null,
-          signals,
-          serverTime: new Date().toISOString(),
-        });
+      if (isDbConnectionError(sqlErr) || isFieldError) {
+        if (useMockDb && isDatabaseMock()) {
+          console.warn('Database error or schema mismatch, using mock signals', sqlErr?.message);
+          const signals = MOCK_SIGNALS.map((row) => ({
+            id: row.id,
+            source: row.source,
+            currencyPair: row.currencyPair,
+            direction: row.direction,
+            entryPrice: row.entryPrice,
+            stopLoss: row.stopLoss,
+            takeProfit: row.takeProfit,
+            action: row.action,
+            status: row.status,
+            createdAt: row.created_at,
+            followerCount: row.followerCount,
+          }));
+          return NextResponse.json({
+            success: true,
+            count: signals.length,
+            followerKey: followerKey || null,
+            signals,
+            serverTime: new Date().toISOString(),
+          });
+        }
       }
       throw sqlErr;
     }
 
-    if (isDatabaseMock()) {
+    if (useMockDb && isDatabaseMock()) {
       const signals = MOCK_SIGNALS.map((row) => ({
         id: row.id,
         source: row.source,
@@ -183,18 +200,21 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const signals = sqlSignals.map((row: any) => ({
-      id: String(row.id),
-      source: 'mysql',
-      currencyPair: row.currencyPair,
-      direction: row.direction,
-      entryPrice: Number(row.entryPrice),
-      stopLoss: Number(row.stopLoss),
-      takeProfit: Number(row.takeProfit),
-      action: row.action || 'OPEN',
-      status: row.status,
-      createdAt: row.created_at
-    }));
+    const signals = sqlSignals.map((row: any) => {
+      const inferredAction = row.action || (row.status === 'PENDING_CLOSE' ? 'CLOSE' : 'OPEN');
+      return {
+        id: String(row.id),
+        source: 'mysql',
+        currencyPair: row.currencyPair,
+        direction: row.direction,
+        entryPrice: Number(row.entryPrice),
+        stopLoss: Number(row.stopLoss),
+        takeProfit: Number(row.takeProfit),
+        action: inferredAction,
+        status: row.status,
+        createdAt: row.created_at
+      };
+    });
 
     return NextResponse.json({
       success: true,
@@ -205,7 +225,7 @@ export async function GET(request: NextRequest) {
     });
   } catch (error: any) {
     const isFieldError = error?.errno === 1054;
-    if (isDbConnectionError(error) || isFieldError) {
+    if ((isDbConnectionError(error) || isFieldError) && useMockDb && isDatabaseMock()) {
       console.warn('Using mock signals because database is unavailable or has schema issues:', error?.message);
       const signals = MOCK_SIGNALS.map((row) => ({
         id: row.id,
@@ -341,6 +361,24 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      if (!mappedFollowerKeys.length) {
+        try {
+          const [rows] = await sqlQuery(`SELECT follower_key FROM follower_accounts WHERE status = 'ACTIVE'`, []);
+          mappedFollowerKeys = Array.isArray(rows) ? rows.map((r: any) => String(r.follower_key).trim()).filter(Boolean) : [];
+        } catch (sqlErr: any) {
+          console.error('SQL follower_accounts lookup failed for close action', sqlErr);
+        }
+      }
+
+      if (!mappedFollowerKeys.length && closeSignalId) {
+        try {
+          const [rows] = await sqlQuery(`SELECT follower_key FROM follower_accounts WHERE status = 'ACTIVE'`, []);
+          mappedFollowerKeys = Array.isArray(rows) ? rows.map((r: any) => String(r.follower_key).trim()).filter(Boolean) : [];
+        } catch (sqlErr: any) {
+          console.error('SQL follower_accounts lookup failed for close action', sqlErr);
+        }
+      }
+
       if (closeSignalId && mappedFollowerKeys.length) {
         try {
           const followerValues = mappedFollowerKeys.map((key: string) => [key, closeSignalId, 'ACTIVE']);
@@ -359,7 +397,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, signalId: closeSignalId, followerKeys: mappedFollowerKeys });
     }
 
-    const actionValue = action === 'open' ? 'OPEN' : 'OPEN';
+    const actionValue = 'OPEN';
     let signalId: number | null = null;
     try {
       try {
@@ -389,9 +427,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'MySQL insert failed' }, { status: 500 });
     }
 
-    if (signalId && followerKeys.length > 0) {
+    let mappedFollowerKeys = followerKeys;
+    if (!mappedFollowerKeys.length) {
       try {
-        const followerValues = followerKeys.map((key: string) => [key, signalId, 'ACTIVE']);
+        const [rows] = await sqlQuery(`SELECT follower_key FROM follower_accounts WHERE status = 'ACTIVE'`, []);
+        mappedFollowerKeys = Array.isArray(rows) ? rows.map((r: any) => String(r.follower_key).trim()).filter(Boolean) : [];
+      } catch (sqlErr: any) {
+        console.error('SQL follower_accounts lookup failed for open action', sqlErr);
+      }
+    }
+
+    if (signalId && mappedFollowerKeys.length) {
+      try {
+        const followerValues = mappedFollowerKeys.map((key: string) => [key, signalId, 'ACTIVE']);
         await db.query(
           `INSERT INTO followers (follower_key, signal_id, status) VALUES ?`,
           [followerValues]
@@ -404,7 +452,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ success: true, signalId, followerKeys });
+    return NextResponse.json({ success: true, signalId, followerKeys: mappedFollowerKeys });
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }

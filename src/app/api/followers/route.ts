@@ -1,6 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { query as sqlQuery, isDatabaseMock } from '@/lib/database';
 
+const useMockDb = process.env.USE_MOCK_DB === 'true';
 const MOCK_FOLLOWERS = [
   { id: 'mock-1', followerKey: 'F-101', name: 'Alpha Demo', mt5Login: '500100', status: 'ACTIVE', lastSeen: new Date().toISOString(), created_at: new Date().toISOString() },
   { id: 'mock-2', followerKey: 'F-102', name: 'Beta Demo', mt5Login: '500101', status: 'ACTIVE', lastSeen: new Date().toISOString(), created_at: new Date().toISOString() },
@@ -25,13 +26,13 @@ export async function GET() {
       []
     );
     const followers = Array.isArray(rows) ? rows : [];
-    if (isDatabaseMock()) {
+    if (useMockDb && isDatabaseMock()) {
       return NextResponse.json({ success: true, count: MOCK_FOLLOWERS.length, followers: MOCK_FOLLOWERS });
     }
     return NextResponse.json({ success: true, count: followers.length, followers });
   } catch (err: any) {
     console.error('Followers GET failed', err);
-    if (isDbConnectionError(err)) {
+    if (useMockDb && isDatabaseMock()) {
       return NextResponse.json({ success: true, count: MOCK_FOLLOWERS.length, followers: MOCK_FOLLOWERS });
     }
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });

@@ -1,5 +1,6 @@
 let dbInstance: any = null;
 let isMockDb = false;
+const forceMockDb = process.env.USE_MOCK_DB === 'true';
 
 function isDbConnectionError(error: any) {
   if (!error) return false;
@@ -11,6 +12,10 @@ function isDbConnectionError(error: any) {
     message.includes('connect ECONNREFUSED') ||
     message.includes('Connection refused')
   );
+}
+
+function shouldUseMockDb() {
+  return forceMockDb;
 }
 
 function createMockDbInstance() {
@@ -40,7 +45,11 @@ async function initDb() {
     isMockDb = false;
   } catch (error) {
     console.error('Failed to initialize database:', error);
-    createMockDbInstance();
+    if (shouldUseMockDb()) {
+      createMockDbInstance();
+    } else {
+      throw error;
+    }
   }
   return dbInstance;
 }
@@ -51,7 +60,7 @@ export const db = {
     try {
       return await instance.query(...args);
     } catch (error) {
-      if (isMockDb || isDbConnectionError(error)) {
+      if (isMockDb || shouldUseMockDb()) {
         createMockDbInstance();
         return [[], []];
       }
@@ -63,7 +72,7 @@ export const db = {
     try {
       return await (instance.execute?.(...args) || [{ insertId: null }, []]);
     } catch (error) {
-      if (isMockDb || isDbConnectionError(error)) {
+      if (isMockDb || shouldUseMockDb()) {
         createMockDbInstance();
         return [{ insertId: null }, []];
       }
@@ -77,7 +86,7 @@ export async function query<T = any>(sql: string, params: Array<any> = []): Prom
   try {
     return (await instance.query(sql, params)) as [T[], any[]];
   } catch (error) {
-    if (isMockDb || isDbConnectionError(error)) {
+    if (isMockDb || shouldUseMockDb()) {
       createMockDbInstance();
       return [[], []];
     }

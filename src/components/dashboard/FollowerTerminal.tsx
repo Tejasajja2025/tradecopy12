@@ -14,11 +14,7 @@ export function FollowerTerminal() {
   const followersQuery = useMemo(() => collection(db, "followers"), [db]);
   const { data: followers, loading } = useCollection(followersQuery);
 
-  const fallbackFollowers = [
-    { id: "F-102", name: "Apex_01", balance: 5240, activeTrades: 2, profitLoss: 134.20, riskPercentage: 2.0, status: "online" },
-    { id: "F-441", name: "Prop_Alpha", balance: 12450, activeTrades: 3, profitLoss: -86.40, riskPercentage: 1.5, status: "online" },
-  ];
-
+  const fallbackFollowers: any[] = [];
   const displayData = followers.length > 0 ? followers : fallbackFollowers;
 
   return (
