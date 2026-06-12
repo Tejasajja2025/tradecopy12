@@ -1,0 +1,79 @@
+
+{
+  "entities": {
+    "MasterConnection": {
+      "title": "Master Connection",
+      "description": "Represents a connection to a Vantage master node.",
+      "type": "object",
+      "properties": {
+        "vantageId": { "type": "string" },
+        "server": { "type": "string" },
+        "isConnected": { "type": "boolean" },
+        "lastHeartbeat": { "type": "string", "format": "date-time" }
+      },
+      "required": ["vantageId", "server", "isConnected"]
+    },
+    "TradeSignal": {
+      "title": "Trade Signal",
+      "description": "A signal broadcasted from the master node.",
+      "type": "object",
+      "properties": {
+        "currencyPair": { "type": "string" },
+        "direction": { "type": "string", "enum": ["BUY", "SELL"] },
+        "entryPrice": { "type": "number" },
+        "stopLoss": { "type": "number" },
+        "takeProfit": { "type": "number" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["PENDING", "EXECUTED", "CLOSED"] }
+      },
+      "required": ["currencyPair", "direction", "entryPrice", "timestamp", "status"]
+    },
+    "FollowerAccount": {
+      "title": "Follower Account",
+      "description": "A follower node connected to the mirror grid.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "balance": { "type": "number" },
+        "riskPercentage": { "type": "number" },
+        "status": { "type": "string", "enum": ["online", "offline", "warning"] },
+        "lastTrade": { "type": "string" }
+      },
+      "required": ["id", "name", "balance", "riskPercentage", "status"]
+    },
+    "BridgeHeartbeat": {
+      "title": "Bridge Heartbeat",
+      "description": "Heartbeat signal from the MT5 EA bridge.",
+      "type": "object",
+      "properties": {
+        "terminalId": { "type": "string" },
+        "lastSeen": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["online", "offline"] },
+        "version": { "type": "string" }
+      },
+      "required": ["terminalId", "lastSeen", "status"]
+    }
+  },
+  "auth": {
+    "providers": ["google.com"]
+  },
+  "firestore": {
+    "/masterConnections/{vantageId}": {
+      "schema": "MasterConnection",
+      "description": "Storage for master node connection states."
+    },
+    "/signals/{signalId}": {
+      "schema": "TradeSignal",
+      "description": "Collection of all broadcasted trade signals."
+    },
+    "/followers/{followerId}": {
+      "schema": "FollowerAccount",
+      "description": "Inventory of active follower accounts."
+    },
+    "/bridges/{bridgeId}": {
+      "schema": "BridgeHeartbeat",
+      "description": "Health monitoring for MT5 EAs."
+    }
+  }
+}
