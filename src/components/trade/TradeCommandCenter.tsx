@@ -121,6 +121,7 @@ export function TradeCommandCenter() {
   // Trade Details State
   const [pair, setPair] = useState("EURUSD");
   const [entry, setEntry] = useState("");
+  const [lotSize, setLotSize] = useState("0.01");
   const [sl, setSl] = useState("");
   const [tp, setTp] = useState("");
   const [followers, setFollowers] = useState("");
@@ -176,7 +177,7 @@ input string ApiUrl = "${mqlApiUrl}";
 input string FollowerKey = "";
 input int    RequestTimeoutMs = 5000;
 input int    PollIntervalSec = 5;
-input double OrderVolume = 0.01;
+input double OrderVolume = 0.0001;
 input int    OrderDeviation = 20;
 input bool   StrictTPValidation = false;
 
@@ -225,8 +226,9 @@ void OnTimer()
          double entryPrice = 0;
          double stopLoss = 0;
          double takeProfit = 0;
+         double lotSize = 0;
 
-         if(ParseFirstPendingSignal(response, signalId, currencyPair, direction, action, entryPrice, stopLoss, takeProfit))
+         if(ParseFirstPendingSignal(response, signalId, currencyPair, direction, action, entryPrice, stopLoss, takeProfit, lotSize))
          {
             if(StringLen(signalId) == 0)
             {
@@ -244,7 +246,7 @@ void OnTimer()
                }
                else
                {
-                  success = ExecuteSignal(currencyPair, direction, entryPrice, stopLoss, takeProfit);
+                  success = ExecuteSignal(currencyPair, direction, entryPrice, stopLoss, takeProfit, lotSize);
                }
 
                if(success)
@@ -284,7 +286,7 @@ void OnTimer()
    }
 }
 
-bool ParseFirstPendingSignal(const string json, string &signalId, string &currencyPair, string &direction, string &action, double &entryPrice, double &stopLoss, double &takeProfit)
+bool ParseFirstPendingSignal(const string json, string &signalId, string &currencyPair, string &direction, string &action, double &entryPrice, double &stopLoss, double &takeProfit, double &lotSize)
 {
    int signalsIndex = StringFind(json, "\"signals\"");
    if(signalsIndex < 0) return false;
@@ -307,6 +309,7 @@ bool ParseFirstPendingSignal(const string json, string &signalId, string &curren
    entryPrice = StringToDouble(ExtractJsonField(document, "entryPrice"));
    stopLoss = StringToDouble(ExtractJsonField(document, "stopLoss"));
    takeProfit = StringToDouble(ExtractJsonField(document, "takeProfit"));
+   lotSize = StringToDouble(ExtractJsonField(document, "lotSize"));
 
    return StringLen(signalId) > 0 && StringLen(currencyPair) > 0 && StringLen(direction) > 0;
 }
@@ -405,7 +408,7 @@ void SanitizeStops(const string currencyPair, const int orderType, const double 
    }
 }
 
-bool ExecuteSignal(const string currencyPair, const string direction, double entryPrice, double stopLoss, double takeProfit)
+bool ExecuteSignal(const string currencyPair, const string direction, double entryPrice, double stopLoss, double takeProfit, double lotSize)
 {
    if(StringLen(currencyPair) == 0 || StringLen(direction) == 0)
       return false;
@@ -439,7 +442,7 @@ bool ExecuteSignal(const string currencyPair, const string direction, double ent
 
    request.action = TRADE_ACTION_DEAL;
    request.symbol = currencyPair;
-   request.volume = OrderVolume;
+   request.volume = lotSize > 0 ? lotSize : OrderVolume;
    request.type = orderType;
    request.price = price;
    request.sl = stopLoss > 0 ? stopLoss : 0;
@@ -670,6 +673,7 @@ bool AckSignal(const string signalId)
           entryPrice: parseFloat(entry) || 0,
           stopLoss: parseFloat(sl) || 0,
           takeProfit: parseFloat(tp) || 0,
+          lotSize: Math.max(0.0001, parseFloat(lotSize) || 0.01),
           followers: followers.split(',').map((key) => key.trim()).filter(Boolean),
         }),
       });
@@ -865,7 +869,7 @@ bool AckSignal(const string signalId)
                 </TabsList>
               </Tabs>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div className="space-y-2">
                   <Label className="text-[10px] text-muted-foreground uppercase font-headline tracking-widest">Pair</Label>
                   <Input
@@ -885,6 +889,11 @@ bool AckSignal(const string signalId)
                 <div className="space-y-2">
                   <Label className="text-[10px] text-muted-foreground uppercase font-headline tracking-widest">Entry</Label>
                   <Input placeholder="1.08450" value={entry} onChange={(e) => setEntry(e.target.value)} className="bg-secondary/20 font-mono border-white/5 focus:border-primary/50" />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-[10px] text-muted-foreground uppercase font-headline tracking-widest">Lots</Label>
+                  <Input type="number" step="0.0001" min="0.0001" placeholder="0.01" value={lotSize} onChange={(e) => setLotSize(e.target.value)} className="bg-secondary/20 font-mono border-white/5 focus:border-primary/50" />
+                  <p className="text-[10px] text-muted-foreground">Minimum lot size is 0.0001.</p>
                 </div>
               </div>
 
@@ -1029,7 +1038,7 @@ bool AckSignal(const string signalId)
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <div>
                             <p className="text-sm font-medium">{signal.currencyPair} · {signal.direction}</p>
-                            <p className="text-xs text-muted-foreground">Entry: {signal.entryPrice} · SL: {signal.stopLoss || 'n/a'} · TP: {signal.takeProfit || 'n/a'}</p>
+                            <p className="text-xs text-muted-foreground">Entry: {signal.entryPrice} · SL: {signal.stopLoss || 'n/a'} · TP: {signal.takeProfit || 'n/a'} · Lots: {signal.lotSize ?? '0.01'}</p>
                           </div>
                           <div className="text-right">
                             <p className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">P/L</p>

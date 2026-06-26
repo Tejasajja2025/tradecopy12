@@ -1,6 +1,7 @@
 
 import { NextResponse, NextRequest } from 'next/server';
 import { db, query as sqlQuery, isDatabaseMock } from '@/lib/database';
+import { createPendingSignal, createPendingCloseSignal, listPendingSignals, markSignalExecuted } from '@/lib/signal-store';
 
 const useMockDb = process.env.USE_MOCK_DB === 'true';
 
@@ -13,6 +14,7 @@ const MOCK_SIGNALS = [
     entryPrice: 1.09049,
     stopLoss: 1.08800,
     takeProfit: 1.09500,
+    lotSize: 0.01,
     action: 'OPEN',
     status: 'PENDING',
     created_at: new Date().toISOString(),
@@ -26,6 +28,7 @@ const MOCK_SIGNALS = [
     entryPrice: 1.27205,
     stopLoss: 1.27500,
     takeProfit: 1.26500,
+    lotSize: 0.01,
     action: 'OPEN',
     status: 'PENDING',
     created_at: new Date().toISOString(),
@@ -45,6 +48,24 @@ function isDbConnectionError(error: any) {
   );
 }
 
+function isMissingActionColumnError(error: any) {
+  if (!error) return false;
+  const message = String(error.message || error.sqlMessage || '');
+  return error?.errno === 1054 && /unknown column .*action/i.test(message);
+}
+
+function isMissingColumnError(error: any, columnName: string) {
+  if (!error) return false;
+  const message = String(error.message || error.sqlMessage || '');
+  return error?.errno === 1054 && new RegExp(`unknown column .*${columnName}`, 'i').test(message);
+}
+
+function normalizeLotSize(value: any) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0.01;
+  return Math.max(0.0001, Number(parsed.toFixed(4)));
+}
+
 /**
  * @fileOverview Self-Hosted Signal API
  * This endpoint is now MySQL-only and returns pending signals from your own server database.
@@ -55,6 +76,30 @@ export async function GET(request: NextRequest) {
   const statusParam = (request.nextUrl.searchParams.get('status') || '').toString().toUpperCase();
   const includeAll = statusParam === 'ALL';
   const statusFilter = includeAll ? null : (statusParam || 'PENDING');
+
+  if (useMockDb && isDatabaseMock()) {
+    const signals = listPendingSignals().map((row) => ({
+      id: row.id,
+      source: row.source,
+      currencyPair: row.currencyPair,
+      direction: row.direction,
+      entryPrice: row.entryPrice,
+      stopLoss: row.stopLoss,
+      takeProfit: row.takeProfit,
+      lotSize: row.lotSize ?? 0.01,
+      action: row.action,
+      status: row.status,
+      createdAt: row.createdAt,
+      followerCount: row.followerCount,
+    }));
+    return NextResponse.json({
+      success: true,
+      count: signals.length,
+      followerKey: followerKey || null,
+      signals,
+      serverTime: new Date().toISOString(),
+    });
+  }
 
   try {
     let sqlSignals: any[] = [];
@@ -70,11 +115,12 @@ export async function GET(request: NextRequest) {
             params.push(statusFilter);
           }
           const [rows] = await sqlQuery(
-            `SELECT s.id, s.currency_pair AS currencyPair, s.direction, s.action, s.entry_price AS entryPrice, s.stop_loss AS stopLoss, s.take_profit AS takeProfit, s.status, s.created_at
+            `SELECT s.id, s.currency_pair AS currencyPair, s.direction, s.action, s.entry_price AS entryPrice, s.stop_loss AS stopLoss, s.take_profit AS takeProfit, COALESCE(s.lot_size, 0) AS lotSize, s.status, s.created_at
              FROM signals s
              JOIN followers f ON f.signal_id = s.id
              WHERE f.follower_key = ? AND f.status = 'ACTIVE' ${statusWhere} AND (f.last_seen IS NULL OR f.last_seen < s.created_at)
-             ORDER BY s.created_at DESC`,
+             ORDER BY s.created_at DESC
+             LIMIT 1`,
             params
           );
           sqlSignals = Array.isArray(rows) ? rows : [];
@@ -89,13 +135,14 @@ export async function GET(request: NextRequest) {
             );
           }
         } catch (sqlErr) {
-          if ((sqlErr as any).errno === 1054 && /Unknown column 's\.action'/.test((sqlErr as any).sqlMessage || '')) {
+          if (isMissingActionColumnError(sqlErr)) {
             const [rows] = await sqlQuery(
               `SELECT s.id, s.currency_pair AS currencyPair, s.direction, s.entry_price AS entryPrice, s.stop_loss AS stopLoss, s.take_profit AS takeProfit, s.status, s.created_at
                FROM signals s
                JOIN followers f ON f.signal_id = s.id
                WHERE f.follower_key = ? AND f.status = 'ACTIVE' AND s.status = 'PENDING' AND (f.last_seen IS NULL OR f.last_seen < s.created_at)
-               ORDER BY s.created_at DESC`,
+               ORDER BY s.created_at DESC
+               LIMIT 1`,
               [followerKey]
             );
             sqlSignals = Array.isArray(rows) ? rows : [];
@@ -119,7 +166,7 @@ export async function GET(request: NextRequest) {
           const statusWhere = statusFilter ? 'WHERE s.status = ?' : '';
           if (statusFilter) params.push(statusFilter);
           const [rows] = await sqlQuery(
-            `SELECT s.id, s.currency_pair AS currencyPair, s.direction, s.action, s.entry_price AS entryPrice, s.stop_loss AS stopLoss, s.take_profit AS takeProfit, s.status, s.created_at,
+            `SELECT s.id, s.currency_pair AS currencyPair, s.direction, s.action, s.entry_price AS entryPrice, s.stop_loss AS stopLoss, s.take_profit AS takeProfit, COALESCE(s.lot_size, 0) AS lotSize, s.status, s.created_at,
                     COALESCE(SUM(f.status = 'ACTIVE'), 0) AS followerCount
              FROM signals s
              LEFT JOIN followers f ON f.signal_id = s.id
@@ -131,13 +178,13 @@ export async function GET(request: NextRequest) {
           );
           sqlSignals = Array.isArray(rows) ? rows : [];
         } catch (sqlErr) {
-          if ((sqlErr as any).errno === 1054 && /Unknown column 'action'/.test((sqlErr as any).sqlMessage || '')) {
+          if (isMissingActionColumnError(sqlErr)) {
             const [rows] = await sqlQuery(
               `SELECT id, currency_pair AS currencyPair, direction, entry_price AS entryPrice, stop_loss AS stopLoss, take_profit AS takeProfit, status, created_at
                FROM signals
                WHERE status = ?
                ORDER BY created_at DESC
-               LIMIT 10`,
+               LIMIT 50`,
               ['PENDING']
             );
             sqlSignals = Array.isArray(rows) ? rows : [];
@@ -148,8 +195,7 @@ export async function GET(request: NextRequest) {
       }
     } catch (sqlErr: any) {
       console.error('SQL select failed', sqlErr);
-      const isFieldError = sqlErr?.errno === 1054;
-      if (isDbConnectionError(sqlErr) || isFieldError) {
+      if (isDbConnectionError(sqlErr) || isMissingActionColumnError(sqlErr)) {
         if (useMockDb && isDatabaseMock()) {
           console.warn('Database error or schema mismatch, using mock signals', sqlErr?.message);
           const signals = MOCK_SIGNALS.map((row) => ({
@@ -160,6 +206,7 @@ export async function GET(request: NextRequest) {
             entryPrice: row.entryPrice,
             stopLoss: row.stopLoss,
             takeProfit: row.takeProfit,
+            lotSize: row.lotSize ?? 0.01,
             action: row.action,
             status: row.status,
             createdAt: row.created_at,
@@ -210,6 +257,7 @@ export async function GET(request: NextRequest) {
         entryPrice: Number(row.entryPrice),
         stopLoss: Number(row.stopLoss),
         takeProfit: Number(row.takeProfit),
+        lotSize: normalizeLotSize(row.lotSize ?? row.lots ?? row.volume ?? 0.01),
         action: inferredAction,
         status: row.status,
         createdAt: row.created_at
@@ -274,6 +322,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      markSignalExecuted(signalId);
       return NextResponse.json({ success: true, acknowledged: true, signalId });
     }
 
@@ -283,6 +332,7 @@ export async function POST(request: NextRequest) {
     const entryPrice = Number(body.entryPrice ?? body.entry_price ?? 0) || 0;
     const stopLoss = Number(body.stopLoss ?? body.stop_loss ?? 0) || 0;
     const takeProfit = Number(body.takeProfit ?? body.take_profit ?? 0) || 0;
+    const lotSize = normalizeLotSize(body.lotSize ?? body.lots ?? body.volume ?? body.lot ?? 0.01);
     const followerKeys = Array.isArray(body.followerKeys)
       ? body.followerKeys.map((key: string) => String(key).trim()).filter(Boolean)
       : typeof body.followerKeys === 'string'
@@ -325,7 +375,7 @@ export async function POST(request: NextRequest) {
           const insertInfo = result as { insertId?: number };
           closeSignalId = insertInfo.insertId ?? null;
         } catch (sqlErr: any) {
-          if ((sqlErr as any).errno === 1054 && /Unknown column 'action'/.test((sqlErr as any).sqlMessage || '')) {
+          if (isMissingActionColumnError(sqlErr)) {
             const [result] = await db.execute(
               `INSERT INTO signals (currency_pair, direction, entry_price, stop_loss, take_profit, status, source) VALUES (?, ?, 0, 0, 0, 'PENDING', ?);`,
               [currencyPair, direction, 'app']
@@ -399,16 +449,33 @@ export async function POST(request: NextRequest) {
 
     const actionValue = 'OPEN';
     let signalId: number | null = null;
+    let mappedFollowerKeys = followerKeys;
+
+    if (currencyPair && direction) {
+      try {
+        const [existingRows] = await sqlQuery(
+          `SELECT id FROM signals WHERE currency_pair = ? AND direction = ? AND status IN ('PENDING', 'PENDING_CLOSE') AND created_at >= DATE_SUB(NOW(), INTERVAL 60 SECOND) ORDER BY created_at DESC LIMIT 1`,
+          [currencyPair, direction]
+        );
+        const existingRow = Array.isArray(existingRows) && existingRows.length > 0 ? existingRows[0] : null;
+        if (existingRow?.id) {
+          return NextResponse.json({ success: true, signalId: Number(existingRow.id), duplicate: true, followerKeys: mappedFollowerKeys });
+        }
+      } catch (dupErr) {
+        console.warn('Duplicate signal check failed', dupErr);
+      }
+    }
+
     try {
       try {
         const [result] = await db.execute(
-          `INSERT INTO signals (currency_pair, direction, entry_price, stop_loss, take_profit, status, source, action) VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?);`,
-          [currencyPair, direction, entryPrice, stopLoss, takeProfit, 'app', actionValue]
+          `INSERT INTO signals (currency_pair, direction, entry_price, stop_loss, take_profit, status, source, action, lot_size) VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?, ?);`,
+          [currencyPair, direction, entryPrice, stopLoss, takeProfit, 'app', actionValue, lotSize]
         );
         const insertInfo = result as { insertId?: number };
         signalId = insertInfo.insertId ?? null;
       } catch (sqlErr: any) {
-        if ((sqlErr as any).errno === 1054 && /Unknown column 'action'/.test((sqlErr as any).sqlMessage || '')) {
+        if (isMissingActionColumnError(sqlErr) || isMissingColumnError(sqlErr, 'lot_size')) {
           const [result] = await db.execute(
             `INSERT INTO signals (currency_pair, direction, entry_price, stop_loss, take_profit, status, source) VALUES (?, ?, ?, ?, ?, 'PENDING', ?);`,
             [currencyPair, direction, entryPrice, stopLoss, takeProfit, 'app']
@@ -422,12 +489,21 @@ export async function POST(request: NextRequest) {
     } catch (sqlErr: any) {
       console.error('SQL insert failed', sqlErr);
       if (sqlErr?.errno === 1054 || isDbConnectionError(sqlErr)) {
-        console.warn('Schema error or database unavailable for signal insert, returning error');
+        console.warn('Schema error or database unavailable for signal insert, using in-memory fallback');
+        const fallbackSignal = createPendingSignal({
+          currencyPair,
+          direction,
+          entryPrice,
+          stopLoss,
+          takeProfit,
+          action: actionValue,
+          followerCount: followerKeys.length,
+        });
+        return NextResponse.json({ success: true, signalId: fallbackSignal.id, followerKeys, lotSize });
       }
       return NextResponse.json({ success: false, error: 'MySQL insert failed' }, { status: 500 });
     }
 
-    let mappedFollowerKeys = followerKeys;
     if (!mappedFollowerKeys.length) {
       try {
         const [rows] = await sqlQuery(`SELECT follower_key FROM follower_accounts WHERE status = 'ACTIVE'`, []);
@@ -452,7 +528,21 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ success: true, signalId, followerKeys: mappedFollowerKeys });
+    if (signalId === null) {
+      const fallbackSignal = createPendingSignal({
+        currencyPair,
+        direction,
+        entryPrice,
+        stopLoss,
+        takeProfit,
+        lotSize,
+        action: actionValue,
+        followerCount: mappedFollowerKeys.length,
+      });
+      return NextResponse.json({ success: true, signalId: fallbackSignal.id, followerKeys: mappedFollowerKeys, lotSize });
+    }
+
+    return NextResponse.json({ success: true, signalId, followerKeys: mappedFollowerKeys, lotSize });
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }

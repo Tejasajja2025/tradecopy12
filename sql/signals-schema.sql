@@ -23,10 +23,30 @@ CREATE TABLE IF NOT EXISTS `signals` (
   `take_profit` DECIMAL(18,8) NOT NULL DEFAULT 0,
   `status` VARCHAR(32) NOT NULL DEFAULT 'PENDING',
   `source` VARCHAR(64) NOT NULL DEFAULT 'app',
+  `action` VARCHAR(16) NOT NULL DEFAULT 'OPEN',
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+SET @dbname = DATABASE();
+SET @tablename = 'signals';
+SET @columnname = 'action';
+SET @preparedStatement = (
+  SELECT IF(
+    (
+      SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = @dbname
+        AND TABLE_NAME = @tablename
+        AND COLUMN_NAME = @columnname
+    ) > 0,
+    'SELECT 1',
+    CONCAT('ALTER TABLE `', @tablename, '` ADD COLUMN `', @columnname, '` VARCHAR(16) NOT NULL DEFAULT ''OPEN''')
+  )
+);
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 CREATE TABLE IF NOT EXISTS `followers` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,

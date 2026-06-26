@@ -66,15 +66,13 @@ void OnTimer()
          int parseStart = 0;
          bool processedAny = false;
 
-         while(ParseFirstPendingSignal(response, parseStart, parseStart, signalId, currencyPair, direction, action, entryPrice, stopLoss, takeProfit))
+         if(ParseFirstPendingSignal(response, parseStart, parseStart, signalId, currencyPair, direction, action, entryPrice, stopLoss, takeProfit))
          {
             if(StringLen(signalId) == 0)
             {
                Print("No valid signal id found in response.");
-               break;
             }
-
-            if(StringCompare(signalId, lastProcessedSignal) != 0)
+            else if(StringCompare(signalId, lastProcessedSignal) != 0)
             {
                Print("Processing signal ", signalId, ": ", action, " ", direction, " ", currencyPair);
                bool success = false;

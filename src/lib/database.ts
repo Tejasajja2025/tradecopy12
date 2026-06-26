@@ -54,6 +54,11 @@ async function initDb() {
   return dbInstance;
 }
 
+export async function getDbConnection() {
+  const instance = await initDb();
+  return instance.getConnection();
+}
+
 export const db = {
   query: async (...args: any[]) => {
     const instance = await initDb();
