@@ -3,7 +3,7 @@
 
 import { useState, useEffect, useMemo, FormEvent } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
-import { TrendingUp, TrendingDown, Send, Zap, Server, Key, User, LogOut, Link2, Info, Copy, Check, ArrowRightLeft, Cloud, Terminal as TerminalIcon, FileCode, AlertCircle, Database, HelpCircle, Globe, Layout } from "lucide-react";
+import { TrendingUp, TrendingDown, Send, Zap, Server, Key, User, LogOut, Link2, Info, Copy, Check, ArrowRightLeft, Cloud, Terminal as TerminalIcon, FileCode, AlertCircle, Database, HelpCircle, Globe, Layout, Eye, EyeOff } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -117,6 +117,7 @@ export function TradeCommandCenter() {
   // Form State
   const [vantageId, setVantageId] = useState("");
   const [vantagePassword, setVantagePassword] = useState("");
+  const [showVantagePassword, setShowVantagePassword] = useState(false);
   const [vantageServer, setVantageServer] = useState("Vantage-Live 2");
 
   // Trade Details State
@@ -803,12 +804,20 @@ bool AckSignal(const string signalId)
                 <Key className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input 
                   key="vantage-pass-input-field"
-                  type="password" 
+                  type={showVantagePassword ? "text" : "password"} 
                   placeholder="••••••••" 
-                  className="bg-secondary/30 font-mono pl-10" 
+                  className="bg-secondary/30 font-mono pl-10 pr-10" 
                   value={vantagePassword}
                   onChange={(e) => setVantagePassword(e.target.value)}
                 />
+                <button
+                  type="button"
+                  aria-label={showVantagePassword ? "Hide password" : "Show password"}
+                  onClick={() => setShowVantagePassword((prev) => !prev)}
+                  className="absolute right-3 top-2.5 text-muted-foreground hover:text-foreground"
+                >
+                  {showVantagePassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
               </div>
             </div>
             <div className="space-y-2">
